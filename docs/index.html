@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LMU Enduro Strategy Calculator</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="page-shell">
+    <header class="hero-card glass-card">
+      <div>
+        <p class="eyebrow">Strategy Toolkit</p>
+        <h1>LMU Endurance Strategy Calculator</h1>
+        <p class="hero-copy">A lightweight browser-based race strategy workbench for Le Mans Ultimate. Inputs, VE tables, stint grids, solver logs and timeline comparison all in one modern, mobile-friendly interface.</p>
+      </div>
+      <div class="hero-meta">
+        <span>Web Workers for heavy Monte Carlo compute</span>
+        <span>Dark glass UI with responsive layout</span>
+      </div>
+    </header>
+
+    <section class="bento-grid">
+      <article class="glass-card inputs-card">
+        <h2>Race Parameters</h2>
+        <div class="field-grid" id="inputGrid"></div>
+      </article>
+
+      <aside class="glass-card actions-card">
+        <h2>Actions</h2>
+        <div class="action-group">
+          <button id="calculateButton" class="btn btn-primary">Calculate</button>
+          <button id="solverButton" class="btn btn-secondary">Run GA Solver</button>
+          <button id="resetButton" class="btn btn-ghost">Reset Defaults</button>
+        </div>
+        <div class="progress-shell">
+          <div class="progress-label"><span id="progressLabel">Idle</span></div>
+          <div class="progress-bar"><div id="progressFill"></div></div>
+        </div>
+        <div class="action-note">The GA offloads compute to a separate browser thread using a Blob worker. Works from GitHub Pages and local servers.</div>
+      </aside>
+    </section>
+
+    <nav class="tabs" aria-label="Calculator tabs">
+      <button class="tab-button active" data-panel="summaryPanel">Summary</button>
+      <button class="tab-button" data-panel="vePanel">VE &amp; Fuel</button>
+      <button class="tab-button" data-panel="gridPanel">Stint Grid</button>
+      <button class="tab-button" data-panel="solverPanel">Monte Carlo Solver</button>
+      <button class="tab-button" data-panel="comparisonPanel">Strategy Comparison</button>
+    </nav>
+
+    <section class="tab-panels">
+      <article class="tab-panel active" id="summaryPanel">
+        <div class="summary-grid">
+          <div class="stat-card glass-card">
+            <span class="stat-label">Race Time</span>
+            <strong id="statRaceTime">6.0 h</strong>
+          </div>
+          <div class="stat-card glass-card">
+            <span class="stat-label">Approx. Laps</span>
+            <strong id="statLaps">206.0</strong>
+          </div>
+          <div class="stat-card glass-card">
+            <span class="stat-label">Full Push VE</span>
+            <strong id="statVe">3.90%</strong>
+          </div>
+          <div class="stat-card glass-card">
+            <span class="stat-label">Wet VE</span>
+            <strong id="statWetVe">4.30%</strong>
+          </div>
+        </div>
+        <div class="copy-panel glass-card">
+          <h3>Model Overview</h3>
+          <p>Full push, fuel-saving stints, tyre-change penalties and chaos factor are combined into a simple but powerful prediction engine. The GA solver evaluates strategies across stop counts to find the best total laps in the race window.</p>
+          <p>Plan A is the full-push benchmark. Plan B is the best GA result across stop counts. Plan C is a constrained GA with one fewer stop than Plan A.</p>
+        </div>
+      </article>
+
+      <article class="tab-panel" id="vePanel">
+        <div class="table-shell">
+          <table id="veTable">
+            <thead>
+              <tr><th>Mode</th><th>VE</th><th>Laps</th><th>Lap Time</th><th>Fuel %</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="tab-panel" id="gridPanel">
+        <div class="table-shell">
+          <table id="gridTable">
+            <thead>
+              <tr><th>Scenario</th><th>Laps</th><th>FP+1</th><th>FP+2</th><th>FP+3</th><th>FP+4</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </article>
+
+      <article class="tab-panel" id="solverPanel">
+        <div class="solver-layout">
+          <div class="solver-log glass-card">
+            <div class="solver-log-header">Solver Log</div>
+            <div id="solverLog" class="solver-log-body"></div>
+          </div>
+          <div class="table-shell glass-card">
+            <table id="solverTable">
+              <thead>
+                <tr><th>Plan</th><th>Stops</th><th>Total Laps</th><th>Pit Time</th><th>Final Fuel</th></tr>
+              </thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </div>
+      </article>
+
+      <article class="tab-panel" id="comparisonPanel">
+        <div class="table-shell glass-card">
+          <table id="comparisonTable">
+            <thead>
+              <tr><th>Metric</th><th>Plan A</th><th>Plan B</th><th>Plan C</th></tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+        <div class="canvas-shell glass-card">
+          <canvas id="ganttCanvas" width="1200" height="320"></canvas>
+        </div>
+      </article>
+    </section>
+  </div>
+
+  <script type="text/plain" id="ga-worker">
+(function () {
+  function SeededRNG(seed) {
+    this.state = seed >>> 0;
+  }
+  SeededRNG.prototype.next = function () {
+    var t = this.state += 0x6D2B79F5;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+  SeededRNG.prototype.random = function () {
+    return this.next();
+  };
+  SeededRNG.prototype.randint = function (min, max) {
+    return min + Math.floor(this.next() * (max - min + 1));
+  };
+  SeededRNG.prototype.randrange = function (n) {
+    return Math.floor(this.next() * n);
+  };
+  SeededRNG.prototype.sample = function (arr, k) {
+    var copy = arr.slice();
+    for (var i = copy.length - 1; i > 0 && k > 0; i -= 1) {
+      var j = Math.floor(this.next() * (i + 1));
+      var tmp = copy[i];
+      copy[i] = copy[j];
+      copy[j] = tmp;
+    }
+    return copy.slice(0, k);
+  };
+
+  function validScenarioFor(stintLaps, d) {
+    var maxFp = d.laps_fp;
+    if (stintLaps <= maxFp) {
+      return { label: 'Full Push', ve: d.ve_full_push, lt: d.lap_time_s, maxLaps: maxFp };
+    }
+    var table = [
+      { label: '+1 lap save', ve: d.ve_fp1, lt: d.lap_time_s * 1.01, maxLaps: d.laps_fp1 },
+      { label: '+2 laps save', ve: d.ve_fp2, lt: d.lap_time_s * 1.02, maxLaps: d.laps_fp2 },
+      { label: '+3 laps save', ve: d.ve_fp3, lt: d.lap_time_s * 1.03, maxLaps: d.laps_fp3 },
+      { label: '+4 laps save', ve: d.ve_fp4, lt: d.lap_time_s * 1.04, maxLaps: d.laps_fp4 }
+    ];
+    for (var i = 0; i < table.length; i += 1) {
+      if (stintLaps <= table[i].maxLaps) {
+        return table[i];
+      }
+    }
+    return null;
+  }
+
+  function refuelTime(veRefill, isTyreChange, d) {
+    if (isTyreChange) {
+      return veRefill * 0.4 + 22.0 + d.DT_TIME;
+    }
+    return veRefill * 0.4 + d.DT_TIME;
+  }
+
+  function evaluateStrategy(stopLaps, d) {
+    var totalPit = 0.0;
+    var elapsedDrive = 0.0;
+    var prev = 0;
+    var nTireStints = 0;
+    for (var i = 0; i < stopLaps.length; i += 1) {
+      var stop = stopLaps[i];
+      var stintLaps = stop - prev;
+      nTireStints += 1;
+      var isTyreChange = nTireStints > d.MAX_STINTS_PER_SET;
+      var scenario = validScenarioFor(stintLaps, d);
+      if (!scenario) {
+        return null;
+      }
+      if (stintLaps < (1 / d.ve_full_push) * 0.7 || stintLaps * scenario.ve > 1.02) {
+        return null;
+      }
+      var fuelL = stintLaps * scenario.ve * 100;
+      totalPit += refuelTime(fuelL, isTyreChange, d);
+      elapsedDrive += stintLaps * scenario.lt * (1 + d.chaos_factor);
+      prev = stop;
+    }
+    var remaining = d.race_time_s - elapsedDrive - totalPit;
+    if (remaining <= 0) {
+      return null;
+    }
+    var finalLaps = remaining / (d.lap_time_s * (1 + d.chaos_factor));
+    if (finalLaps < (1 / d.ve_full_push) * 0.7 || finalLaps * d.ve_full_push > 1.02) {
+      return null;
+    }
+    var totalLaps = stopLaps.length ? stopLaps[stopLaps.length - 1] + finalLaps : finalLaps;
+    var finalFuelL = Math.ceil(Math.ceil(finalLaps) * d.ve_full_push * 100);
+    return {
+      stop_laps: stopLaps,
+      n_stops: stopLaps.length,
+      total_pit_time: totalPit,
+      final_laps: finalLaps,
+      total_laps: totalLaps,
+      final_fuel_l: finalFuelL
+    };
+  }
+
+  function computePlanA(d) {
+    var lapsFp = d.laps_fp;
+    var lt = d.lap_time_s;
+    var ve = d.ve_full_push;
+    var chaos = d.chaos_factor;
+    var raceTime = d.race_time_s;
+    var fuelPerStint = lapsFp * ve * 100;
+    var stopLaps = [];
+    var totalDrive = 0.0;
+    var totalPit = 0.0;
+    var currentLap = 0;
+    var nTireStints = 0;
+    while (true) {
+      nTireStints += 1;
+      var isTyreChange = nTireStints > d.MAX_STINTS_PER_SET;
+      var stintDrive = lapsFp * lt * (1 + chaos);
+      var pit = refuelTime(fuelPerStint, isTyreChange, d);
+      if (totalDrive + stintDrive + totalPit + pit >= raceTime) {
+        break;
+      }
+      totalDrive += stintDrive;
+      totalPit += pit;
+      currentLap += lapsFp;
+      stopLaps.push(currentLap);
+    }
+    var remaining = raceTime - totalDrive - totalPit;
+    if (remaining <= 0) {
+      return null;
+    }
+    var finalLaps = remaining / (lt * (1 + chaos));
+    var totalLaps = currentLap + finalLaps;
+    var finalFuelL = Math.ceil(Math.ceil(finalLaps) * ve * 100);
+    return {
+      stop_laps: stopLaps,
+      n_stops: stopLaps.length,
+      total_pit_time: totalPit,
+      final_laps: finalLaps,
+      total_laps: totalLaps,
+      final_fuel_l: finalFuelL
+    };
+  }
+
+  function sampleStopLaps(rng, nStops, lo, hi, gap) {
+    nStops = Math.floor(nStops);
+    if (nStops === 0) {
+      return [];
+    }
+    var available = Math.floor(hi - lo - (nStops - 1) * gap);
+    if (available <= 0) {
+      return null;
+    }
+    var raw = [];
+    for (var i = 0; i < nStops; i += 1) {
+      raw.push(rng.randint(0, available));
+    }
+    raw.sort(function (a, b) { return a - b; });
+    var result = [];
+    for (var j = 0; j < nStops; j += 1) {
+      result.push(lo + raw[j] + j * gap);
+    }
+    return result;
+  }
+
+  function runSolver(params) {
+    var d = params;
+    var rng = new SeededRNG(d.random_seed);
+    var minStint = Math.floor((1 / d.ve_full_push) * 0.8);
+    var hardCeil = Math.floor(d.race_time_s / d.lap_time_s);
+    var planA = computePlanA(d);
+    if (!planA) {
+      self.postMessage({ type: 'error', msg: 'Could not compute Plan A with the current parameters.' });
+      return;
+    }
+    self.postMessage({ type: 'log', msg: 'Plan A computed: ' + planA.n_stops + ' stops → ' + planA.total_laps.toFixed(2) + ' laps' });
+    var POP_SIZE = 100;
+    var N_GEN = Math.max(20, Math.floor(d.n_simulations / POP_SIZE));
+    var ELITE_N = Math.max(2, Math.floor(POP_SIZE / 10));
+    var TOURNAMENT_K = 5;
+    var CROSSOVER_RATE = 0.7;
+    var MUTATION_RATE = 0.4;
+
+    function makeIndividual() {
+      var n = rng.randint(1, planA.n_stops);
+      return sampleStopLaps(rng, n, minStint, hardCeil - minStint, minStint);
+    }
+
+    function crossover(p1, p2) {
+      var combined = Array.from(new Set(p1.concat(p2))).sort(function (a, b) { return a - b; });
+      if (!combined.length) {
+        return p1.slice();
+      }
+      var size = rng.randint(Math.min(p1.length, p2.length), Math.max(p1.length, p2.length));
+      size = Math.max(1, Math.min(size, combined.length, planA.n_stops));
+      var sample = [];
+      while (sample.length < size) {
+        var candidate = combined[rng.randrange(combined.length)];
+        if (sample.indexOf(candidate) === -1) {
+          sample.push(candidate);
+        }
+      }
+      return sample.sort(function (a, b) { return a - b; });
+    }
+
+    function mutate(ind) {
+      var candidate = ind.slice();
+      var op = rng.random();
+      if (op < 0.33 && candidate.length > 1) {
+        candidate.splice(rng.randrange(candidate.length), 1);
+      } else if (op < 0.66 && candidate.length < planA.n_stops) {
+        var newStop = rng.randint(minStint, Math.max(minStint, hardCeil - minStint));
+        if (candidate.indexOf(newStop) === -1) {
+          candidate.push(newStop);
+        }
+      } else if (candidate.length) {
+        var idx = rng.randrange(candidate.length);
+        var delta = rng.randint(-minStint, minStint);
+        var shifted = Math.max(minStint, Math.min(Math.max(minStint, hardCeil - minStint), candidate[idx] + delta));
+        candidate[idx] = shifted;
+      }
+      candidate = Array.from(new Set(candidate)).sort(function (a, b) { return a - b; });
+      if (!candidate.length) {
+        candidate = [rng.randint(minStint, Math.max(minStint, hardCeil - minStint))];
+      }
+      return candidate;
+    }
+
+    function tournament(popFit) {
+      var pool = [];
+      for (var i = 0; i < TOURNAMENT_K; i += 1) {
+        pool.push(popFit[rng.randrange(popFit.length)]);
+      }
+      var valid = pool.filter(function (item) { return item[1] !== null; });
+      if (valid.length) {
+        valid.sort(function (a, b) { return b[1].total_laps - a[1].total_laps; });
+        return valid[0][0];
+      }
+      return pool[0][0];
+    }
+
+    var population = [];
+    while (population.length < POP_SIZE) {
+      var individual = makeIndividual();
+      if (individual) {
+        population.push(individual);
+      }
+    }
+
+    var bestResult = null;
+    self.postMessage({ type: 'log', msg: 'Starting GA for Plan B with ' + POP_SIZE + ' individuals and ' + N_GEN + ' generations.' });
+    for (var gen = 0; gen < N_GEN; gen += 1) {
+      var popFit = population.map(function (ind) {
+        return [ind, evaluateStrategy(ind, d)];
+      });
+      var validSet = popFit.filter(function (entry) { return entry[1] !== null; });
+      if (validSet.length) {
+        var genBest = validSet.reduce(function (a, b) {
+          return b[1].total_laps > a[1].total_laps ? b : a;
+        })[1];
+        if (!bestResult || genBest.total_laps > bestResult.total_laps) {
+          bestResult = genBest;
+        }
+      }
+      if (gen % Math.max(1, Math.floor(N_GEN / 10)) === 0) {
+        self.postMessage({ type: 'progress', planLabel: 'B', gen: gen + 1, total: N_GEN, best: bestResult ? bestResult.total_laps.toFixed(2) : '—' });
+      }
+      var nextPop = [];
+      if (validSet.length) {
+        validSet.sort(function (a, b) { return b[1].total_laps - a[1].total_laps; });
+        for (var e = 0; e < ELITE_N; e += 1) {
+          nextPop.push(validSet[e][0].slice());
+        }
+      }
+      while (nextPop.length < POP_SIZE) {
+        var p1 = tournament(popFit);
+        var child = p1.slice();
+        if (rng.random() < CROSSOVER_RATE) {
+          var p2 = tournament(popFit);
+          child = crossover(p1, p2);
+        }
+        if (rng.random() < MUTATION_RATE) {
+          child = mutate(child);
+        }
+        nextPop.push(child);
+      }
+      population = nextPop;
+    }
+    self.postMessage({ type: 'log', msg: 'GA complete for Plan B.' });
+
+    var planB = bestResult;
+    if (!planB) {
+      self.postMessage({ type: 'log', msg: 'No valid Plan B found.' });
+    }
+
+    var targetC = planA.n_stops - 1;
+    var planC = null;
+    if (targetC >= 1) {
+      self.postMessage({ type: 'log', msg: 'Starting GA for Plan C with exactly ' + targetC + ' stops.' });
+      function makeIndividualC() {
+        return sampleStopLaps(rng, targetC, minStint, hardCeil - minStint, minStint);
+      }
+      function crossoverC(p1, p2) {
+        var combined = Array.from(new Set(p1.concat(p2))).sort(function (a, b) { return a - b; });
+        if (combined.length < targetC) {
+          return p1.length >= p2.length ? p1.slice() : p2.slice();
+        }
+        var result = [];
+        while (result.length < targetC) {
+          var candidate = combined[rng.randrange(combined.length)];
+          if (result.indexOf(candidate) === -1) {
+            result.push(candidate);
+          }
+        }
+        return result.sort(function (a, b) { return a - b; });
+      }
+      function mutateC(ind) {
+        var candidate = ind.slice();
+        var idx = rng.randrange(candidate.length);
+        var delta = rng.randint(-minStint, minStint);
+        candidate[idx] = Math.max(minStint, Math.min(Math.max(minStint, hardCeil - minStint), candidate[idx] + delta));
+        candidate = Array.from(new Set(candidate)).sort(function (a, b) { return a - b; });
+        while (candidate.length < targetC) {
+          var extra = rng.randint(minStint, Math.max(minStint, hardCeil - minStint));
+          if (candidate.indexOf(extra) === -1) {
+            candidate.push(extra);
+          }
+        }
+        return candidate.sort(function (a, b) { return a - b; });
+      }
+      function tournamentC(popFitC) {
+        var pool = [];
+        for (var i = 0; i < TOURNAMENT_K; i += 1) {
+          pool.push(popFitC[rng.randrange(popFitC.length)]);
+        }
+        var valid = pool.filter(function (entry) { return entry[1] !== null; });
+        if (valid.length) {
+          valid.sort(function (a, b) { return b[1].total_laps - a[1].total_laps; });
+          return valid[0][0];
+        }
+        return pool[0][0];
+      }
+      var populationC = [];
+      var attempts = 0;
+      while (populationC.length < POP_SIZE && attempts < POP_SIZE * 50) {
+        var candidate = makeIndividualC();
+        if (candidate && evaluateStrategy(candidate, d) !== null) {
+          populationC.push(candidate);
+        }
+        attempts += 1;
+      }
+      if (!populationC.length) {
+        self.postMessage({ type: 'log', msg: 'Plan C not feasible with the chosen parameters.' });
+      } else {
+        while (populationC.length < POP_SIZE) {
+          populationC.push(populationC[rng.randrange(populationC.length)].slice());
+        }
+        var bestC = null;
+        for (var genC = 0; genC < N_GEN; genC += 1) {
+          var popFitC = populationC.map(function (ind) {
+            return [ind, evaluateStrategy(ind, d)];
+          });
+          var validC = popFitC.filter(function (entry) { return entry[1] !== null; });
+          if (validC.length) {
+            var genBestC = validC.reduce(function (a, b) { return b[1].total_laps > a[1].total_laps ? b : a; })[1];
+            if (!bestC || genBestC.total_laps > bestC.total_laps) {
+              bestC = genBestC;
+            }
+          }
+          if (genC % Math.max(1, Math.floor(N_GEN / 10)) === 0) {
+            self.postMessage({ type: 'progress', planLabel: 'C', gen: genC + 1, total: N_GEN, best: bestC ? bestC.total_laps.toFixed(2) : '—' });
+          }
+          var nextC = [];
+          if (validC.length) {
+            validC.sort(function (a, b) { return b[1].total_laps - a[1].total_laps; });
+            for (var e2 = 0; e2 < ELITE_N; e2 += 1) {
+              nextC.push(validC[e2][0].slice());
+            }
+          }
+          while (nextC.length < POP_SIZE) {
+            var pc1 = tournamentC(popFitC);
+            var childC = pc1.slice();
+            if (rng.random() < CROSSOVER_RATE) {
+              var pc2 = tournamentC(popFitC);
+              childC = crossoverC(pc1, pc2);
+            }
+            if (rng.random() < MUTATION_RATE) {
+              childC = mutateC(childC);
+            }
+            nextC.push(childC);
+          }
+          populationC = nextC;
+        }
+        bestC && self.postMessage({ type: 'log', msg: 'GA complete for Plan C.' });
+        planC = bestC;
+      }
+    } else {
+      self.postMessage({ type: 'log', msg: 'Plan C not applicable — Plan A already has minimum stops.' });
+    }
+
+    self.postMessage({ type: 'result', planA: planA, planB: planB, planC: planC });
+  }
+
+  self.addEventListener('message', function (event) {
+    if (event.data && event.data.type === 'run') {
+      runSolver(event.data.payload);
+    }
+  });
+})();
+  </script>
+
+  <script src="app.js"></script>
+</body>
+</html>
