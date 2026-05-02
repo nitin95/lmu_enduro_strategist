@@ -316,7 +316,13 @@ function computePlanA(d) {
 }
 
 function createWorker() {
+  if (typeof Worker === 'undefined') {
+    throw new Error('Web Workers are not supported in this browser.');
+  }
   const source = document.getElementById('ga-worker').textContent;
+  if (!source) {
+    throw new Error('Worker source not found.');
+  }
   const blob = new Blob([source], { type: 'text/javascript' });
   const url = URL.createObjectURL(blob);
   const worker = new Worker(url);
@@ -339,8 +345,18 @@ function runSolver() {
   elements.solverLog.textContent = '';
   setProgress(0, 'Starting solver…');
   const data = state.data || getInputs();
-  const worker = createWorker();
+  let worker;
+  try {
+    worker = createWorker();
+  } catch (error) {
+    appendSolverLog(`Worker failed to start: ${error.message}`);
+    appendSolverLog('Worker support may be blocked in this browser or environment.');
+    setProgress(0, 'Worker unavailable');
+    setSolverButtons(true);
+    return;
+  }
   state.worker = worker;
+  appendSolverLog('Solver worker created. Running in background thread.');
   worker.addEventListener('message', event => {
     const payload = event.data;
     if (!payload) return;
@@ -375,6 +391,22 @@ function runSolver() {
       state.worker = null;
     }
   });
+  worker.onerror = event => {
+    appendSolverLog(`Worker error: ${event.message} (${event.filename}:${event.lineno})`);
+    setProgress(0, 'Worker error');
+    setSolverButtons(true);
+    worker.terminate();
+    URL.revokeObjectURL(worker._blobUrl);
+    state.worker = null;
+  };
+  worker.onmessageerror = event => {
+    appendSolverLog('Worker message error.');
+    setProgress(0, 'Worker message error');
+    setSolverButtons(true);
+    worker.terminate();
+    URL.revokeObjectURL(worker._blobUrl);
+    state.worker = null;
+  };
   worker.postMessage({ type: 'run', payload: data });
 }
 

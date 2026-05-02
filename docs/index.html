@@ -533,6 +533,7 @@
 
   self.addEventListener('message', function (event) {
     if (event.data && event.data.type === 'run') {
+      self.postMessage({ type: 'log', msg: 'Worker thread received start request.' });
       runSolver(event.data.payload);
     }
   });
