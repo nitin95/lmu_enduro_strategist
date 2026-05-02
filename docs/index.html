@@ -398,13 +398,14 @@
       var nextPop = [];
       if (validSet.length) {
         validSet.sort(function (a, b) { return b[1].total_laps - a[1].total_laps; });
-        for (var e = 0; e < ELITE_N; e += 1) {
+        var eliteCount = Math.min(ELITE_N, validSet.length);
+        for (var e = 0; e < eliteCount; e += 1) {
           nextPop.push(validSet[e][0].slice());
         }
       }
       while (nextPop.length < POP_SIZE) {
         var p1 = tournament(popFit);
-        var child = p1.slice();
+        var child = p1 ? p1.slice() : [];
         if (rng.random() < CROSSOVER_RATE) {
           var p2 = tournament(popFit);
           child = crossover(p1, p2);
@@ -503,13 +504,14 @@
           var nextC = [];
           if (validC.length) {
             validC.sort(function (a, b) { return b[1].total_laps - a[1].total_laps; });
-            for (var e2 = 0; e2 < ELITE_N; e2 += 1) {
+            var eliteCountC = Math.min(ELITE_N, validC.length);
+            for (var e2 = 0; e2 < eliteCountC; e2 += 1) {
               nextC.push(validC[e2][0].slice());
             }
           }
           while (nextC.length < POP_SIZE) {
             var pc1 = tournamentC(popFitC);
-            var childC = pc1.slice();
+            var childC = pc1 ? pc1.slice() : [];
             if (rng.random() < CROSSOVER_RATE) {
               var pc2 = tournamentC(popFitC);
               childC = crossoverC(pc1, pc2);
