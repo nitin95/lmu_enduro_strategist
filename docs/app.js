@@ -6,8 +6,8 @@ const DEFAULTS = {
   MAX_STINTS_PER_SET: 2,
   DT_TIME: 32,
   chaos_factor: 0.01,
-  WET_RACE: false,
-  wet_ve: 0.043,
+  // WET_RACE: false,
+  // wet_ve: 0.043,
   fuel_to_ve: 1.25,
   n_simulations: 1000000,
   random_seed: 42,
@@ -21,8 +21,8 @@ const INPUT_DEFINITIONS = [
   { label: 'Max stints per tyre set', key: 'MAX_STINTS_PER_SET', type: 'number' },
   { label: 'Drive-through penalty (s)', key: 'DT_TIME', type: 'number' },
   { label: 'Chaos factor', key: 'chaos_factor', type: 'number' },
-  { label: 'Wet race', key: 'WET_RACE', type: 'checkbox' },
-  { label: 'Wet VE/lap', key: 'wet_ve', type: 'number' },
+  // { label: 'Wet race', key: 'WET_RACE', type: 'checkbox' },
+  // { label: 'Wet VE/lap', key: 'wet_ve', type: 'number' },
   { label: 'Fuel → VE conversion', key: 'fuel_to_ve', type: 'number' },
   { label: 'GA evaluation budget', key: 'n_simulations', type: 'number' },
   { label: 'Random seed', key: 'random_seed', type: 'number' },
@@ -46,7 +46,7 @@ const elements = {
   statRaceTime: document.getElementById('statRaceTime'),
   statLaps: document.getElementById('statLaps'),
   statVe: document.getElementById('statVe'),
-  statWetVe: document.getElementById('statWetVe'),
+  // statWetVe: document.getElementById('statWetVe'),
   veTableBody: document.querySelector('#veTable tbody'),
   gridTableBody: document.querySelector('#gridTable tbody'),
   solverLog: document.getElementById('solverLog'),
@@ -132,13 +132,13 @@ function calculateDerived(d) {
   const lapsFp2 = lapsFp1 + 1;
   const lapsFp3 = lapsFp2 + 1;
   const lapsFp4 = lapsFp3 + 1;
-  const lapsWet = d.WET_RACE ? Math.floor(1 / d.wet_ve) : lapsFp1;
+  // const lapsWet = d.WET_RACE ? Math.floor(1 / d.wet_ve) : lapsFp1;
   d.laps_fp = lapsFp;
   d.laps_fp1 = lapsFp1;
   d.laps_fp2 = lapsFp2;
   d.laps_fp3 = lapsFp3;
   d.laps_fp4 = lapsFp4;
-  d.laps_wet = lapsWet;
+  // d.laps_wet = lapsWet;
   d.ve_fp1 = 1 / lapsFp1;
   d.ve_fp2 = 1 / lapsFp2;
   d.ve_fp3 = 1 / lapsFp3;
@@ -154,7 +154,7 @@ function renderSummary(d) {
   elements.statRaceTime.textContent = `${d.race_hours.toFixed(1)} h`;
   elements.statLaps.textContent = `${d.laps_approx.toFixed(1)}`;
   elements.statVe.textContent = `${(d.ve_full_push * 100).toFixed(2)}%`;
-  elements.statWetVe.textContent = `${(d.wet_ve * 100).toFixed(2)}%`;
+  // elements.statWetVe.textContent = `${(d.wet_ve * 100).toFixed(2)}%`;
 }
 
 function renderVeTable(d) {
@@ -165,7 +165,7 @@ function renderVeTable(d) {
     { label: '+2 laps save', ve: d.ve_fp2 * 100, laps: d.laps_fp2, lt: d.lap_time_s * 1.02, fuel: d.fuel_fp2 },
     { label: '+3 laps save', ve: d.ve_fp3 * 100, laps: d.laps_fp3, lt: d.lap_time_s * 1.03, fuel: d.fuel_fp3 },
     { label: '+4 laps save', ve: d.ve_fp4 * 100, laps: d.laps_fp4, lt: d.lap_time_s * 1.04, fuel: d.fuel_fp4 },
-    { label: 'Wet', ve: d.wet_ve * 100, laps: d.laps_wet, lt: d.lap_time_s * 1.2, fuel: null },
+    // { label: 'Wet', ve: d.wet_ve * 100, laps: d.laps_wet, lt: d.lap_time_s * 1.2, fuel: null },
   ];
   rows.forEach(row => {
     const tr = document.createElement('tr');

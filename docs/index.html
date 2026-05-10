@@ -10,14 +10,14 @@
   <div class="page-shell">
     <header class="hero-card glass-card">
       <div>
-        <p class="eyebrow">Strategy Toolkit</p>
         <h1>LMU Endurance Strategy Calculator</h1>
-        <p class="hero-copy">A lightweight browser-based race strategy workbench for Le Mans Ultimate. Inputs, VE tables, stint grids, solver logs and timeline comparison all in one modern, mobile-friendly interface.</p>
+        <p class="eyebrow">v0.1.1</p>
+        <p class="eyebrow">By Nitin Murthy, 2026</p>
       </div>
-      <div class="hero-meta">
+      <!-- <div class="hero-meta">
         <span>Web Workers for heavy Monte Carlo compute</span>
         <span>Dark glass UI with responsive layout</span>
-      </div>
+      </div> -->
     </header>
 
     <section class="bento-grid">
@@ -29,15 +29,15 @@
       <aside class="glass-card actions-card">
         <h2>Actions</h2>
         <div class="action-group">
-          <button id="calculateButton" class="btn btn-primary">Calculate</button>
-          <button id="solverButton" class="btn btn-secondary">Run GA Solver</button>
-          <button id="resetButton" class="btn btn-ghost">Reset Defaults</button>
+          <button id="calculateButton" class="btn btn-primary">Calculate (click first)</button>
+          <button id="solverButton" class="btn btn-primary">Run GA Solver</button>
+          <button id="resetButton" class="btn btn-secondary">Reset Defaults</button>
         </div>
         <div class="progress-shell">
           <div class="progress-label"><span id="progressLabel">Idle</span></div>
           <div class="progress-bar"><div id="progressFill"></div></div>
         </div>
-        <div class="action-note">The GA offloads compute to a separate browser thread using a Blob worker. Works from GitHub Pages and local servers.</div>
+        <!-- <div class="action-note">The GA offloads compute to a separate browser thread using a Blob worker. Works from GitHub Pages and local servers.</div> -->
       </aside>
     </section>
 
@@ -45,7 +45,7 @@
       <button class="tab-button active" data-panel="summaryPanel">Summary</button>
       <button class="tab-button" data-panel="vePanel">VE &amp; Fuel</button>
       <button class="tab-button" data-panel="gridPanel">Stint Grid</button>
-      <button class="tab-button" data-panel="solverPanel">Monte Carlo Solver</button>
+      <button class="tab-button" data-panel="solverPanel">Strat Solver</button>
       <button class="tab-button" data-panel="comparisonPanel">Strategy Comparison</button>
     </nav>
 
@@ -64,16 +64,16 @@
             <span class="stat-label">Full Push VE</span>
             <strong id="statVe">3.90%</strong>
           </div>
-          <div class="stat-card glass-card">
+          <!-- <div class="stat-card glass-card">
             <span class="stat-label">Wet VE</span>
             <strong id="statWetVe">4.30%</strong>
-          </div>
+          </div> -->
         </div>
-        <div class="copy-panel glass-card">
+        <!-- <div class="copy-panel glass-card">
           <h3>Model Overview</h3>
           <p>Full push, fuel-saving stints, tyre-change penalties and chaos factor are combined into a simple but powerful prediction engine. The GA solver evaluates strategies across stop counts to find the best total laps in the race window.</p>
           <p>Plan A is the full-push benchmark. Plan B is the best GA result across stop counts. Plan C is a constrained GA with one fewer stop than Plan A.</p>
-        </div>
+        </div> -->
       </article>
 
       <article class="tab-panel" id="vePanel">

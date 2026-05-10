@@ -105,7 +105,7 @@ h1 {
 
 .field-grid {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) minmax(110px, 140px);
+  grid-template-columns: minmax(100px, 2fr) minmax(100px, 2fr);
   gap: 16px 12px;
 }
 
