@@ -36,6 +36,186 @@ const VE_COLORS = {
   '+4 laps save': '#ef4444',
 };
 
+// ============================================================================
+// Linear Interpolator (port from scipy.interp1d)
+// ============================================================================
+class LinearInterpolator {
+  constructor(xArray, yArray) {
+    this.x = Array.from(xArray).sort((a, b) => a - b);
+    const indices = this.x.map((val, idx) => [val, idx]).sort((a, b) => a[0] - b[0]).map(x => x[1]);
+    this.y = indices.map(i => yArray[i]);
+    if (this.x.length < 2) {
+      throw new Error('LinearInterpolator requires at least 2 points');
+    }
+  }
+
+  interpolate(x) {
+    if (x <= this.x[0]) {
+      return this.y[0];
+    }
+    if (x >= this.x[this.x.length - 1]) {
+      return this.y[this.y.length - 1];
+    }
+    let i = 0;
+    while (i < this.x.length - 1 && this.x[i + 1] < x) {
+      i++;
+    }
+    const x0 = this.x[i];
+    const x1 = this.x[i + 1];
+    const y0 = this.y[i];
+    const y1 = this.y[i + 1];
+    return y0 + ((x - x0) / (x1 - x0)) * (y1 - y0);
+  }
+}
+
+// ============================================================================
+// XML Parsing Functions
+// ============================================================================
+function parseXMLFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const xmlText = e.target.result;
+        const parser = new DOMParser();
+        const xmlDoc = parser.parseFromString(xmlText, 'text/xml');
+        if (xmlDoc.getElementsByTagName('parsererror').length > 0) {
+          throw new Error('Invalid XML format');
+        }
+        const laps = extractLapsFromXML(xmlDoc);
+        resolve(laps);
+      } catch (error) {
+        reject(error);
+      }
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsText(file);
+  });
+}
+
+function extractLapsFromXML(xmlDoc) {
+  const laps = [];
+  const trackVenue = xmlDoc.querySelector('TrackVenue')?.textContent || 'Unknown';
+  const trackCourse = xmlDoc.querySelector('TrackCourse')?.textContent || '';
+  const track = `${trackVenue}${trackCourse ? `(${trackCourse})` : ''}`;
+
+  const sessionTypes = ['Practice', 'Practice1', 'Practice2', 'Qualify', 'Qualify1', 'Qualify2', 'Race', 'Warmup', 'Test'];
+  
+  for (const sessionTag of sessionTypes) {
+    const sessionElems = xmlDoc.getElementsByTagName(sessionTag);
+    for (const session of sessionElems) {
+      const drivers = session.getElementsByTagName('Driver');
+      for (const driverElem of drivers) {
+        const driverName = driverElem.querySelector('Name')?.textContent || 'Unknown';
+        const lapElems = driverElem.getElementsByTagName('Lap');
+        for (const lapElem of lapElems) {
+          const lapTimeStr = lapElem.textContent?.trim();
+          const veUsedStr = lapElem.getAttribute('veUsed') || lapElem.getAttribute('ve_used');
+          
+          if (!lapTimeStr || lapTimeStr === '--.----') continue;
+          
+          const lapTime = parseFloat(lapTimeStr);
+          const veUsed = parseFloat(veUsedStr);
+          
+          if (isNaN(lapTime) || isNaN(veUsed) || veUsed < 0) continue;
+          
+          laps.push({
+            driver: driverName,
+            lap_time: lapTime,
+            ve_used: veUsed,
+            track_venue: trackVenue,
+            track_course: trackCourse,
+            track: track,
+            session_type: sessionTag,
+          });
+        }
+      }
+    }
+  }
+  
+  return laps;
+}
+
+// ============================================================================
+// Data Aggregation Functions
+// ============================================================================
+function extractUniqueTracks(lapRecords) {
+  const trackSet = new Set();
+  lapRecords.forEach(lap => {
+    trackSet.add(lap.track);
+  });
+  return Array.from(trackSet).sort();
+}
+
+function extractDriversForTrack(lapRecords, track) {
+  const driverMap = new Map();
+  lapRecords
+    .filter(lap => lap.track === track)
+    .forEach(lap => {
+      if (!driverMap.has(lap.driver)) {
+        driverMap.set(lap.driver, 0);
+      }
+      driverMap.set(lap.driver, driverMap.get(lap.driver) + 1);
+    });
+  return Array.from(driverMap.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([driver, count]) => ({ driver, count }));
+}
+
+function extractTeamLaps(lapRecords, track, drivers) {
+  const driverSet = new Set(drivers);
+  return lapRecords
+    .filter(lap => lap.track === track && driverSet.has(lap.driver))
+    .map(lap => ({ ve_used: lap.ve_used, lap_time: lap.lap_time }));
+}
+
+function extractVeLaptimeRelationship(laps, minValidLaps = 3) {
+  const groups = new Map();
+  laps.forEach(lap => {
+    const veRounded = Math.round(lap.ve_used * 10000) / 10000;
+    if (!groups.has(veRounded)) {
+      groups.set(veRounded, []);
+    }
+    groups.get(veRounded).push(lap.lap_time);
+  });
+
+  // Log diagnostic info
+  console.log(`Total laps: ${laps.length}, Unique VE values: ${groups.size}`);
+  const groupSizes = Array.from(groups.values()).map(v => v.length);
+  console.log(`Group sizes: ${groupSizes.join(', ')}`);
+
+  // Try with progressively more lenient criteria
+  for (let minLaps of [minValidLaps, 2, 1]) {
+    const aggregated = [];
+    for (const [ve, laptimes] of groups.entries()) {
+      if (laptimes.length >= minLaps) {
+        const mean = laptimes.reduce((a, b) => a + b, 0) / laptimes.length;
+        const std = Math.sqrt(
+          laptimes.reduce((sq, val) => sq + Math.pow(val - mean, 2), 0) / laptimes.length
+        );
+        aggregated.push({ ve_used: ve, mean_laptime: mean, count: laptimes.length, std });
+      }
+    }
+
+    if (aggregated.length >= 2) {
+      console.log(`Aggregated data created with ${aggregated.length} groups (minLaps threshold: ${minLaps})`);
+      return aggregated.sort((a, b) => a.ve_used - b.ve_used);
+    }
+  }
+
+  console.error(`Failed to aggregate data: only ${groups.size} unique VE values found`);
+  return null;
+}
+
+function createInterpolatorFromData(aggregatedData) {
+  if (!aggregatedData || aggregatedData.length < 2) {
+    return null;
+  }
+  const ve_array = aggregatedData.map(d => d.ve_used);
+  const laptime_array = aggregatedData.map(d => d.mean_laptime);
+  return new LinearInterpolator(ve_array, laptime_array);
+}
+
 const elements = {
   inputGrid: document.getElementById('inputGrid'),
   calculateButton: document.getElementById('calculateButton'),
@@ -46,13 +226,22 @@ const elements = {
   statRaceTime: document.getElementById('statRaceTime'),
   statLaps: document.getElementById('statLaps'),
   statVe: document.getElementById('statVe'),
-  // statWetVe: document.getElementById('statWetVe'),
   veTableBody: document.querySelector('#veTable tbody'),
   gridTableBody: document.querySelector('#gridTable tbody'),
   solverLog: document.getElementById('solverLog'),
   solverTableBody: document.querySelector('#solverTable tbody'),
   comparisonTableBody: document.querySelector('#comparisonTable tbody'),
   ganttCanvas: document.getElementById('ganttCanvas'),
+  // Data tab elements
+  xmlFileInput: document.getElementById('xmlFileInput'),
+  dataStatusLabel: document.getElementById('dataStatusLabel'),
+  trackDropdown: document.getElementById('trackDropdown'),
+  driverSelect: document.getElementById('driverSelect'),
+  selectedDriversList: document.getElementById('selectedDriversList'),
+  buildInterpolatorBtn: document.getElementById('buildInterpolatorBtn'),
+  clearDataBtn: document.getElementById('clearDataBtn'),
+  modeIndicator: document.getElementById('modeIndicator'),
+  raceTrackDropdown: document.getElementById('raceTrackDropdown'),
 };
 
 const state = {
@@ -62,7 +251,23 @@ const state = {
   planB: null,
   planC: null,
   worker: null,
+  // Team data state
+  xmlData: [],
+  selectedTrack: null,
+  selectedDrivers: [],
+  interpolatorMode: 'hardcoded',
+  currentInterpolator: null,
+  teamInfo: null,
 };
+
+// Create default hardcoded interpolator
+const HARDCODED_VE = [0.040, 0.039, 0.038, 0.037, 0.036];
+const HARDCODED_LAPTIME = [74, 74.2, 74.5, 75, 75.5];
+try {
+  state.currentInterpolator = new LinearInterpolator(HARDCODED_VE, HARDCODED_LAPTIME);
+} catch (e) {
+  console.error('Failed to create hardcoded interpolator:', e);
+}
 
 function initInputs() {
   INPUT_DEFINITIONS.forEach(({ label, key, type }) => {
@@ -160,16 +365,17 @@ function renderSummary(d) {
 function renderVeTable(d) {
   elements.veTableBody.innerHTML = '';
   const rows = [
-    { label: 'Full Push', ve: d.ve_full_push * 100, laps: d.laps_fp, lt: d.lap_time_s, fuel: d.fuel_fp },
-    { label: '+1 lap save', ve: d.ve_fp1 * 100, laps: d.laps_fp1, lt: d.lap_time_s * 1.01, fuel: d.fuel_fp1 },
-    { label: '+2 laps save', ve: d.ve_fp2 * 100, laps: d.laps_fp2, lt: d.lap_time_s * 1.02, fuel: d.fuel_fp2 },
-    { label: '+3 laps save', ve: d.ve_fp3 * 100, laps: d.laps_fp3, lt: d.lap_time_s * 1.03, fuel: d.fuel_fp3 },
-    { label: '+4 laps save', ve: d.ve_fp4 * 100, laps: d.laps_fp4, lt: d.lap_time_s * 1.04, fuel: d.fuel_fp4 },
-    // { label: 'Wet', ve: d.wet_ve * 100, laps: d.laps_wet, lt: d.lap_time_s * 1.2, fuel: null },
+    { label: 'Full Push', ve: d.ve_full_push * 100, laps: d.laps_fp, ve_val: d.ve_full_push, fuel: d.fuel_fp },
+    { label: '+1 lap save', ve: d.ve_fp1 * 100, laps: d.laps_fp1, ve_val: d.ve_fp1, fuel: d.fuel_fp1 },
+    { label: '+2 laps save', ve: d.ve_fp2 * 100, laps: d.laps_fp2, ve_val: d.ve_fp2, fuel: d.fuel_fp2 },
+    { label: '+3 laps save', ve: d.ve_fp3 * 100, laps: d.laps_fp3, ve_val: d.ve_fp3, fuel: d.fuel_fp3 },
+    { label: '+4 laps save', ve: d.ve_fp4 * 100, laps: d.laps_fp4, ve_val: d.ve_fp4, fuel: d.fuel_fp4 },
+    // { label: 'Wet', ve: d.wet_ve * 100, laps: d.laps_wet, ve_val: d.wet_ve, fuel: null },
   ];
   rows.forEach(row => {
+    const lt = state.currentInterpolator ? state.currentInterpolator.interpolate(row.ve_val) : d.lap_time_s;
     const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${row.label}</td><td>${row.ve.toFixed(2)}%</td><td>${row.laps}</td><td>${row.lt.toFixed(2)}s</td><td>${row.fuel === null ? '—' : row.fuel.toFixed(2)}</td>`;
+    tr.innerHTML = `<td>${row.label}</td><td>${row.ve.toFixed(2)}%</td><td>${row.laps}</td><td>${lt.toFixed(2)}s</td><td>${row.fuel === null ? '—' : row.fuel.toFixed(2)}</td>`;
     elements.veTableBody.appendChild(tr);
   });
 }
@@ -223,16 +429,260 @@ function switchTab(panelId) {
   });
 }
 
+// ============================================================================
+// Team Data Event Handlers
+// ============================================================================
+async function handleXMLUpload(event) {
+  const files = Array.from(event.target.files);
+  if (files.length === 0) return;
+
+  try {
+    for (const file of files) {
+      const laps = await parseXMLFile(file);
+      state.xmlData = state.xmlData.concat(laps);
+    }
+    updateDataStatus();
+    updateTrackDropdowns();
+  } catch (error) {
+    alert(`Error loading XML: ${error.message}`);
+  }
+}
+
+function updateDataStatus() {
+  if (state.xmlData.length === 0) {
+    elements.dataStatusLabel.textContent = 'No data loaded';
+    elements.buildInterpolatorBtn.disabled = true;
+    elements.trackDropdown.disabled = true;
+    return;
+  }
+  elements.dataStatusLabel.textContent = `Loaded: ${state.xmlData.length} laps from ${new Set(state.xmlData.map(l => l.track)).size} tracks`;
+  elements.trackDropdown.disabled = false;
+}
+
+function updateTrackDropdowns() {
+  const tracks = extractUniqueTracks(state.xmlData);
+  
+  // Update data tab track dropdown
+  elements.trackDropdown.innerHTML = tracks.map(t => `<option value="${t}">${t}</option>`).join('');
+  if (tracks.length > 0 && !state.selectedTrack) {
+    state.selectedTrack = tracks[0];
+    elements.trackDropdown.value = state.selectedTrack;
+  }
+  
+  // Update race parameters track dropdown
+  const currentTracks = [{ label: 'Hardcoded (no data)', value: null }, ...tracks.map(t => ({ label: t, value: t }))];
+  const currentValue = elements.raceTrackDropdown.value;
+  elements.raceTrackDropdown.innerHTML = currentTracks.map(t => `<option value="${t.value || ''}">${t.label}</option>`).join('');
+  
+  if (state.selectedTrack) {
+    elements.raceTrackDropdown.value = state.selectedTrack;
+  }
+  
+  updateDriverDropdown();
+}
+
+function updateDriverDropdown() {
+  if (!state.selectedTrack) {
+    elements.driverSelect.innerHTML = '<option>No track selected</option>';
+    elements.driverSelect.disabled = true;
+    return;
+  }
+
+  const drivers = extractDriversForTrack(state.xmlData, state.selectedTrack);
+  elements.driverSelect.innerHTML = drivers
+    .map(d => `<option value="${d.driver}">${d.driver} (${d.count} laps)</option>`)
+    .join('');
+  elements.driverSelect.disabled = drivers.length === 0;
+}
+
+function handleTrackChange(event) {
+  state.selectedTrack = event.target.value;
+  elements.raceTrackDropdown.value = state.selectedTrack || '';
+  state.selectedDrivers = [];
+  updateDriverDropdown();
+  updateSelectedDriversList();
+  elements.buildInterpolatorBtn.disabled = true;
+}
+
+function handleRaceTrackChange(event) {
+  const newTrack = event.target.value || null;
+  if (newTrack !== state.selectedTrack) {
+    state.selectedTrack = newTrack;
+    elements.trackDropdown.value = newTrack || '';
+    state.selectedDrivers = [];
+    updateDriverDropdown();
+    updateSelectedDriversList();
+    elements.buildInterpolatorBtn.disabled = true;
+  }
+}
+
+function handleDriverSelection(event) {
+  const selected = Array.from(event.target.selectedOptions).map(o => o.value);
+  
+  // Enforce max 6 drivers
+  if (selected.length > 6) {
+    alert('Maximum 6 drivers allowed per team');
+    event.target.value = Array.from(event.target.options)
+      .filter(o => state.selectedDrivers.includes(o.value))
+      .map(o => o.value);
+    return;
+  }
+  
+  state.selectedDrivers = selected;
+  updateSelectedDriversList();
+  elements.buildInterpolatorBtn.disabled = selected.length === 0;
+}
+
+function updateSelectedDriversList() {
+  if (state.selectedDrivers.length === 0) {
+    elements.selectedDriversList.innerHTML = '<p style="margin: 0; color: var(--text-muted);">No drivers selected</p>';
+    return;
+  }
+
+  const teamLaps = extractTeamLaps(state.xmlData, state.selectedTrack, state.selectedDrivers);
+  const veRange = teamLaps.length > 0 
+    ? `${Math.min(...teamLaps.map(l => l.ve_used)).toFixed(4)} - ${Math.max(...teamLaps.map(l => l.ve_used)).toFixed(4)}`
+    : 'N/A';
+
+  let html = `<div style="margin-bottom: 8px;"><strong>Team:</strong> ${state.selectedDrivers.join(', ')}</div>`;
+  html += `<div style="margin-bottom: 8px;"><strong>Total laps:</strong> ${teamLaps.length}</div>`;
+  html += `<div><strong>VE range:</strong> ${veRange}</div>`;
+  
+  elements.selectedDriversList.innerHTML = html;
+}
+
+function buildTeamInterpolator() {
+  if (state.selectedDrivers.length === 0) {
+    alert('Select at least one driver');
+    return;
+  }
+
+  const teamLaps = extractTeamLaps(state.xmlData, state.selectedTrack, state.selectedDrivers);
+  if (teamLaps.length < 10) {
+    alert(`Insufficient data: ${teamLaps.length} laps (need at least 10)`);
+    return;
+  }
+
+  const aggregatedData = extractVeLaptimeRelationship(teamLaps);
+  if (!aggregatedData) {
+    alert(
+      `Unable to build interpolator: your ${teamLaps.length} laps don't have enough distinct VE values or grouping. ` +
+      `Check the browser console for diagnostic details.`
+    );
+    return;
+  }
+
+  const newInterpolator = createInterpolatorFromData(aggregatedData);
+  if (!newInterpolator) {
+    alert('Failed to create interpolator from team data');
+    return;
+  }
+
+  state.currentInterpolator = newInterpolator;
+  state.interpolatorMode = 'team-data';
+  state.teamInfo = {
+    track: state.selectedTrack,
+    drivers: state.selectedDrivers,
+    lapCount: teamLaps.length,
+    aggregatedData: aggregatedData,
+  };
+
+  saveToLocalStorage();
+  updateModeIndicator();
+  calculate();
+}
+
+function clearAllData() {
+  state.xmlData = [];
+  state.selectedTrack = null;
+  state.selectedDrivers = [];
+  state.currentInterpolator = new LinearInterpolator(HARDCODED_VE, HARDCODED_LAPTIME);
+  state.interpolatorMode = 'hardcoded';
+  state.teamInfo = null;
+  
+  elements.xmlFileInput.value = '';
+  elements.trackDropdown.innerHTML = '<option>No data loaded</option>';
+  elements.trackDropdown.disabled = true;
+  elements.driverSelect.innerHTML = '<option>No drivers available</option>';
+  elements.driverSelect.disabled = true;
+  elements.selectedDriversList.innerHTML = '<p style="margin: 0; color: var(--text-muted);">No drivers selected</p>';
+  elements.buildInterpolatorBtn.disabled = true;
+  elements.raceTrackDropdown.innerHTML = '<option value="">Hardcoded (no data)</option>';
+  
+  updateDataStatus();
+  updateModeIndicator();
+  clearLocalStorage();
+  calculate();
+}
+
+function updateModeIndicator() {
+  if (state.interpolatorMode === 'hardcoded') {
+    elements.modeIndicator.textContent = '📊 Using: Hardcoded defaults';
+    elements.modeIndicator.style.color = 'var(--text-muted)';
+  } else {
+    const drivers = state.teamInfo.drivers.slice(0, 2).join(', ') + (state.teamInfo.drivers.length > 2 ? ` +${state.teamInfo.drivers.length - 2}` : '');
+    elements.modeIndicator.textContent = `📊 Using: Team Data (${drivers})`;
+    elements.modeIndicator.style.color = '#22c55e';
+  }
+}
+
+function saveToLocalStorage() {
+  if (state.teamInfo) {
+    const data = {
+      mode: 'team-data',
+      track: state.teamInfo.track,
+      drivers: state.teamInfo.drivers,
+      ve_array: state.teamInfo.aggregatedData.map(d => d.ve_used),
+      laptime_array: state.teamInfo.aggregatedData.map(d => d.mean_laptime),
+      timestamp: new Date().toISOString(),
+    };
+    localStorage.setItem('lmu_team_interpolator', JSON.stringify(data));
+  }
+}
+
+function loadFromLocalStorage() {
+  try {
+    const stored = localStorage.getItem('lmu_team_interpolator');
+    if (!stored) return;
+
+    const data = JSON.parse(stored);
+    if (data.mode !== 'team-data' || !data.ve_array || !data.laptime_array) {
+      return;
+    }
+
+    const interp = new LinearInterpolator(data.ve_array, data.laptime_array);
+    state.currentInterpolator = interp;
+    state.interpolatorMode = 'team-data';
+    state.teamInfo = {
+      track: data.track,
+      drivers: data.drivers,
+      lapCount: 0,
+      aggregatedData: data.ve_array.map((ve, i) => ({
+        ve_used: ve,
+        mean_laptime: data.laptime_array[i],
+      })),
+    };
+    updateModeIndicator();
+  } catch (error) {
+    console.warn('Failed to load stored interpolator:', error);
+  }
+}
+
+function clearLocalStorage() {
+  localStorage.removeItem('lmu_team_interpolator');
+}
+
 function validScenarioFor(stintLaps, d) {
   const maxFp = d.laps_fp;
   if (stintLaps <= maxFp) {
-    return { label: 'Full Push', ve: d.ve_full_push, lt: d.lap_time_s, maxLaps: maxFp };
+    const lt = state.currentInterpolator ? state.currentInterpolator.interpolate(d.ve_full_push) : d.lap_time_s;
+    return { label: 'Full Push', ve: d.ve_full_push, lt: lt, maxLaps: maxFp };
   }
   const table = [
-    { label: '+1 lap save', ve: d.ve_fp1, lt: d.lap_time_s * 1.01, maxLaps: d.laps_fp1 },
-    { label: '+2 laps save', ve: d.ve_fp2, lt: d.lap_time_s * 1.02, maxLaps: d.laps_fp2 },
-    { label: '+3 laps save', ve: d.ve_fp3, lt: d.lap_time_s * 1.03, maxLaps: d.laps_fp3 },
-    { label: '+4 laps save', ve: d.ve_fp4, lt: d.lap_time_s * 1.04, maxLaps: d.laps_fp4 },
+    { label: '+1 lap save', ve: d.ve_fp1, lt: state.currentInterpolator ? state.currentInterpolator.interpolate(d.ve_fp1) : d.lap_time_s * 1.01, maxLaps: d.laps_fp1 },
+    { label: '+2 laps save', ve: d.ve_fp2, lt: state.currentInterpolator ? state.currentInterpolator.interpolate(d.ve_fp2) : d.lap_time_s * 1.02, maxLaps: d.laps_fp2 },
+    { label: '+3 laps save', ve: d.ve_fp3, lt: state.currentInterpolator ? state.currentInterpolator.interpolate(d.ve_fp3) : d.lap_time_s * 1.03, maxLaps: d.laps_fp3 },
+    { label: '+4 laps save', ve: d.ve_fp4, lt: state.currentInterpolator ? state.currentInterpolator.interpolate(d.ve_fp4) : d.lap_time_s * 1.04, maxLaps: d.laps_fp4 },
   ];
   return table.find(item => stintLaps <= item.maxLaps) || null;
 }
@@ -279,7 +729,7 @@ function evaluateStrategy(stopLaps, d) {
 
 function computePlanA(d) {
   const lapsFp = d.laps_fp;
-  const lt = d.lap_time_s;
+  const lt = state.currentInterpolator ? state.currentInterpolator.interpolate(d.ve_full_push) : d.lap_time_s;
   const ve = d.ve_full_push;
   const chaos = d.chaos_factor;
   const raceTime = d.race_time_s;
@@ -582,11 +1032,29 @@ function attachEventHandlers() {
     });
     calculate();
   });
+  
+  // XML file upload handler
+  elements.xmlFileInput.addEventListener('change', handleXMLUpload);
+  
+  // Track dropdown handlers
+  elements.trackDropdown.addEventListener('change', handleTrackChange);
+  elements.raceTrackDropdown.addEventListener('change', handleRaceTrackChange);
+  
+  // Driver select handler
+  elements.driverSelect.addEventListener('change', handleDriverSelection);
+  
+  // Build interpolator button
+  elements.buildInterpolatorBtn.addEventListener('click', buildTeamInterpolator);
+  
+  // Clear data button
+  elements.clearDataBtn.addEventListener('click', clearAllData);
+  
   window.addEventListener('resize', debounce(drawGanttChart, 200));
 }
 
 function init() {
   initInputs();
+  loadFromLocalStorage();
   attachEventHandlers();
   calculate();
 }

@@ -3,26 +3,39 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+  <meta http-equiv="Pragma" content="no-cache" />
+  <meta http-equiv="Expires" content="0" />
   <title>LMU Enduro Strategy Calculator</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=1" />
+  <script>
+    // Force reload from server, bypassing cache
+    if (performance.navigation.type === 2) {
+      location.reload(true);
+    }
+  </script>
 </head>
 <body>
   <div class="page-shell">
     <header class="hero-card glass-card">
       <div>
         <h1>LMU Endurance Strategy Calculator</h1>
-        <p class="eyebrow">v0.1.1</p>
+        <p class="eyebrow">v0.2.0</p>
         <p class="eyebrow">By Nitin Murthy, 2026</p>
       </div>
-      <!-- <div class="hero-meta">
-        <span>Web Workers for heavy Monte Carlo compute</span>
-        <span>Dark glass UI with responsive layout</span>
-      </div> -->
     </header>
 
     <section class="bento-grid">
       <article class="glass-card inputs-card">
         <h2>Race Parameters</h2>
+        <div style="margin-bottom: 16px;">
+          <label style="display: flex; align-items: center; color: var(--text-muted); gap: 8px;">
+            <span>Track</span>
+            <select id="raceTrackDropdown" style="flex: 1; min-width: 0; border: 1px solid rgba(255,255,255,0.14); border-radius: 14px; background: rgba(255,255,255,0.05); color: var(--text); padding: 10px 12px; font-size: 0.95rem;">
+              <option>Hardcoded (no data)</option>
+            </select>
+          </label>
+        </div>
         <div class="field-grid" id="inputGrid"></div>
       </article>
 
@@ -30,6 +43,7 @@
         <h2>Actions</h2>
         <div class="action-group">
           <button id="calculateButton" class="btn btn-primary">Calculate (click first)</button>
+          <!-- TODO: debug need to run GA solver twice to get the strategy comparison tab to work -->
           <button id="solverButton" class="btn btn-primary">Run GA Solver</button>
           <button id="resetButton" class="btn btn-secondary">Reset Defaults</button>
         </div>
@@ -37,12 +51,12 @@
           <div class="progress-label"><span id="progressLabel">Idle</span></div>
           <div class="progress-bar"><div id="progressFill"></div></div>
         </div>
-        <!-- <div class="action-note">The GA offloads compute to a separate browser thread using a Blob worker. Works from GitHub Pages and local servers.</div> -->
       </aside>
     </section>
 
     <nav class="tabs" aria-label="Calculator tabs">
       <button class="tab-button active" data-panel="summaryPanel">Summary</button>
+      <button class="tab-button" data-panel="dataPanel">Data &amp; Team</button>
       <button class="tab-button" data-panel="vePanel">VE &amp; Fuel</button>
       <button class="tab-button" data-panel="gridPanel">Stint Grid</button>
       <button class="tab-button" data-panel="solverPanel">Strat Solver</button>
@@ -64,16 +78,50 @@
             <span class="stat-label">Full Push VE</span>
             <strong id="statVe">3.90%</strong>
           </div>
+          <!-- TODO: Plan out actual wet race handling -->
           <!-- <div class="stat-card glass-card">
             <span class="stat-label">Wet VE</span>
             <strong id="statWetVe">4.30%</strong>
           </div> -->
         </div>
-        <!-- <div class="copy-panel glass-card">
-          <h3>Model Overview</h3>
-          <p>Full push, fuel-saving stints, tyre-change penalties and chaos factor are combined into a simple but powerful prediction engine. The GA solver evaluates strategies across stop counts to find the best total laps in the race window.</p>
-          <p>Plan A is the full-push benchmark. Plan B is the best GA result across stop counts. Plan C is a constrained GA with one fewer stop than Plan A.</p>
-        </div> -->
+      </article>
+
+      <article class="tab-panel" id="dataPanel">
+        <div class="glass-card" style="padding: 24px;">
+          <h3>XML Session Upload</h3>
+          <div style="margin-bottom: 20px;">
+            <input type="file" id="xmlFileInput" multiple accept=".xml" style="margin-bottom: 12px; display: block;" />
+            <p id="dataStatusLabel" style="color: var(--text-muted); font-size: 0.95rem; margin: 0;">No data loaded</p>
+          </div>
+          <div style="display: flex; gap: 12px; margin-bottom: 20px;">
+            <button id="buildInterpolatorBtn" class="btn btn-secondary" disabled>Build Team Interpolator</button>
+            <button id="clearDataBtn" class="btn btn-ghost">Clear Data</button>
+          </div>
+
+          <div id="modeIndicator" style="padding: 12px; background: rgba(255,255,255,0.04); border-radius: 8px; margin-bottom: 20px; font-size: 0.95rem;">
+            📊 Using: Hardcoded defaults
+          </div>
+
+          <div style="border-top: 1px solid rgba(255,255,255,0.12); padding-top: 20px;">
+            <h3>Team Builder</h3>
+            <div style="margin-bottom: 16px;">
+              <label style="display: block; margin-bottom: 8px; color: var(--text-muted); font-size: 0.95rem;">Track</label>
+              <select id="trackDropdown" style="width: 100%; padding: 10px; border-radius: 8px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); color: var(--text); font-size: 0.95rem;" disabled>
+                <option>No data loaded</option>
+              </select>
+            </div>
+            <div style="margin-bottom: 16px;">
+              <label style="display: block; margin-bottom: 8px; color: var(--text-muted); font-size: 0.95rem;">Drivers (select up to 6)</label>
+              <select id="driverSelect" multiple style="width: 100%; padding: 10px; border-radius: 8px; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.12); color: var(--text); font-size: 0.95rem; height: 120px;" disabled>
+                <option>No drivers available</option>
+              </select>
+              <p style="color: var(--text-muted); font-size: 0.85rem; margin: 8px 0 0 0;">Ctrl/Cmd+click to select multiple</p>
+            </div>
+            <div id="selectedDriversList" style="padding: 12px; background: rgba(255,255,255,0.04); border-radius: 8px; font-size: 0.9rem;">
+              <p style="margin: 0; color: var(--text-muted);">No drivers selected</p>
+            </div>
+          </div>
+        </div>
       </article>
 
       <article class="tab-panel" id="vePanel">
@@ -542,6 +590,6 @@
 })();
   </script>
 
-  <script src="app.js"></script>
+  <script src="app.js?v=1"></script>
 </body>
 </html>
